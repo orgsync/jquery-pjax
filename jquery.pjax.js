@@ -226,6 +226,11 @@ function pjax(options) {
   }
 
   options.success = function(data, status, xhr) {
+
+    // Cache current container element before replacing it
+    fire('pjax:beforeCache');
+    cachePush(pjax.state.id, context.html())
+
     // If $.pjax.defaults.version is a function, invoke it first.
     // Otherwise it can be a static string.
     var currentVersion = (typeof $.pjax.defaults.version === 'function') ?
@@ -262,7 +267,7 @@ function pjax(options) {
     }
 
     // Clear out any focused controls before inserting new page contents.
-    document.activeElement.blur()
+    if (document.activeElement) document.activeElement.blur()
 
     if (container.title) document.title = container.title
     context.html(container.contents)
@@ -333,9 +338,6 @@ function pjax(options) {
 
   if (xhr.readyState > 0) {
     if (options.push && !options.replace) {
-      // Cache current container element before replacing it
-      cachePush(pjax.state.id, context.clone().contents())
-
       window.history.pushState(null, "", stripPjaxParam(options.requestUrl))
     }
 
@@ -403,7 +405,7 @@ function onPjaxPopstate(event) {
 
     // If popping back to the same state, just skip.
     // Could be clicking back from hashchange rather than a pushState.
-    if (pjax.state.id === state.id) return
+    if (pjax.state && pjax.state.id === state.id) return
 
     var container = $(state.container)
     if (container.length) {
@@ -416,7 +418,8 @@ function onPjaxPopstate(event) {
 
         // Cache current container before replacement and inform the
         // cache which direction the history shifted.
-        cachePop(direction, pjax.state.id, container.clone().contents())
+        container.trigger('pjax:beforeCache');
+        cachePop(direction, pjax.state.id, container.html())
       }
 
       var popstateEvent = $.Event('pjax:popstate', {
@@ -617,6 +620,11 @@ function parseHTML(html) {
 function extractContainer(data, xhr, options) {
   var obj = {}
 
+  data = (data || '').replace(
+    /<script(.*?)>(.*?)<\/script>/g,
+    '<pjax:script$1><!--[CDATA[$2]]--></pjax:script>'
+  );
+
   // Prefer X-PJAX-URL header if it was set, otherwise fallback to
   // using the original requested url.
   obj.url = stripPjaxParam(xhr.getResponseHeader('X-PJAX-URL') || options.requestUrl)
@@ -670,6 +678,15 @@ function extractContainer(data, xhr, options) {
     // Gather all script[src] elements
     obj.scripts = findAll(obj.contents, 'script[src]').remove()
     obj.contents = obj.contents.not(obj.scripts)
+
+    obj.contents = obj.contents
+      .map(function () { return this.outerHTML || ''; })
+      .toArray()
+      .join('')
+      .replace(
+        /<pjax:script(.*?)><!--\[CDATA\[(.*?)]]--><\/pjax:script>/g,
+        '<script$1>$2</script>'
+      );
   }
 
   // Trim any whitespace off the title
